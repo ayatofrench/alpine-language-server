@@ -15,7 +15,6 @@ pub fn deinit(self: @This(), allocator: std.mem.Allocator) void {
 
 // Caller owns returned memory.
 pub fn parse(allocator: std.mem.Allocator, reader: anytype) !Header {
-    std.debug.print("beginning parse...", .{});
     var r = Header{
         .content_length = undefined,
         .content_type = null,
@@ -23,7 +22,6 @@ pub fn parse(allocator: std.mem.Allocator, reader: anytype) !Header {
     errdefer r.deinit(allocator);
 
     var has_content_length = false;
-    std.debug.print("before header loop", .{});
     while (true) {
         const header = try reader.readUntilDelimiterAlloc(allocator, '\n', 0x100);
         defer allocator.free(header);
@@ -41,11 +39,8 @@ pub fn parse(allocator: std.mem.Allocator, reader: anytype) !Header {
         } else {
             return error.UnknownHeader;
         }
-        std.debug.print("hmm..", .{});
     }
     if (!has_content_length) return error.MissingContentLength;
-
-    std.debug.print("returning the header..", .{});
 
     return r;
 }

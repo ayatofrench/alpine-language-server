@@ -10,4 +10,4 @@ lsp_debug.start({
   root_dir = vim.loop.cwd(),
 })
 
--- vim.notify(vim.lsp.log.levels)
+-- vim.notify(vim.lp.log.levels)

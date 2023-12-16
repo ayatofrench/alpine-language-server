@@ -1,5 +1,5 @@
 const std = @import("std");
-const types = @import("../../lsp_types.zig");
+const types = @import("lsp_types.zig");
 const Header = @import("Header.zig");
 
 // Credit: https://github.com/zigtools/zls/blob/master/src/Server.zig
@@ -217,13 +217,8 @@ pub const Message = union(enum) {
         }
     }
 
-    pub fn read(allocator: std.mem.Allocator, reader: anytype) !Message {
-        std.debug.print("reading stdin...\n", .{});
-        std.debug.print("will this print?...\n", .{});
-        const header = Header.parse(allocator, reader) catch {
-            std.debug.print("there was an error...\n", .{});
-            unreachable;
-        };
+    pub fn read(allocator: std.mem.Allocator, reader: anytype) !std.json.Parsed(Message) {
+        const header = try Header.parse(allocator, reader);
         defer header.deinit(allocator);
 
         const content = try allocator.alloc(u8, header.content_length);
@@ -236,7 +231,7 @@ pub const Message = union(enum) {
             .max_value_len = null,
         });
 
-        return lsp_msg.value;
+        return lsp_msg;
     }
 
     pub fn write(writer: anytype) !void {

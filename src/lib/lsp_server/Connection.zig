@@ -4,7 +4,7 @@ const std = @import("std");
 const Channel = @import("../Channel.zig").Channel;
 const Header = @import("Header.zig");
 const Message = @import("./Message.zig").Message;
-const types = @import("../../lsp_types.zig");
+const types = @import("lsp_types.zig");
 const util = @import("./util.zig");
 
 // pub const Message = struct {
@@ -15,17 +15,18 @@ const util = @import("./util.zig");
 //
 // }
 
-const MsgChannel = Channel(Message);
+const ReceiverChannel = Channel(std.json.Parsed(Message));
 const SenderChannel = Channel(Message);
 
 allocator: std.mem.Allocator,
 arena: std.heap.ArenaAllocator,
-sender: *MsgChannel,
-receiver: *MsgChannel,
+sender: *SenderChannel,
+receiver: *ReceiverChannel,
 io_threads: IoThreads,
 status: Status = .uninitialized,
 in_lock: std.Thread.Mutex = .{},
 out_lock: std.Thread.Mutex = .{},
+_message_store: std.ArrayList(std.json.Parsed(Message)),
 
 pub const ConnectionType = enum {
     stdio,
@@ -76,35 +77,36 @@ pub fn create(allocator: std.mem.Allocator, conn_type: ConnectionType) !*Connect
         .writer = writer,
         .reader = reader,
     };
+    c._message_store = std.ArrayList(std.json.Parsed(Message)).init(allocator);
 
     return c;
 }
 
 // TODO: Implement init
-pub fn init(self: *Connection, server_capabilities: types.ServerCapabilities) !Message.Request.Params {
+pub fn init(self: *Connection, server_capabilities: types.ServerCapabilities) !std.json.Parsed(Message) {
     self.arena = std.heap.ArenaAllocator.init(self.allocator);
     errdefer self.arena.deinit();
 
-    const init_params = try self.init_start();
+    const init_msg = try self.initStart();
 
     const init_data = try util.toJsonValue(self.arena.allocator(), types.InitializeResult{
         .capabilities = server_capabilities,
         .serverInfo = .{ .name = "alpine-lsp", .version = "0.1" },
     });
 
-    try self.init_finish(init_params.?[0], init_data);
+    // TODO: handle the case when init_msg can be null
+    if (init_msg) |msg| {
+        try self.initFinish(msg.value.request.id, init_data);
+    }
 
-    return init_params.?[1];
+    return init_msg.?;
 }
 
-pub fn init_start(self: *Connection) !?struct {
-    types.RequestId,
-    Message.Request.Params,
-} {
+pub fn initStart(self: *Connection) !?std.json.Parsed(Message) {
     while (try self.receiver.try_pop(true)) |msg| {
-        break switch (msg) {
-            .request => |req| {
-                return .{ req.id, req.params };
+        break switch (msg.value) {
+            .request => {
+                return msg;
             },
             else => std.debug.panic("we should not be here on startup", .{}),
         };
@@ -112,7 +114,7 @@ pub fn init_start(self: *Connection) !?struct {
 
     return null;
 }
-pub fn init_finish(self: *Connection, id: types.RequestId, init_result: types.LSPAny) anyerror!void {
+pub fn initFinish(self: *Connection, id: types.RequestId, init_result: types.LSPAny) anyerror!void {
     const resp = Message{
         .response = Message.Response{
             .id = id,
@@ -123,9 +125,10 @@ pub fn init_finish(self: *Connection, id: types.RequestId, init_result: types.LS
     try self.sender.try_push(resp);
 
     while (try self.receiver.try_pop(true)) |msg| {
-        switch (msg) {
+        defer msg.deinit();
+        switch (msg.value) {
             .notification => {
-                std.debug.print("we received the notification {any}", .{msg});
+                std.debug.print("we received the notification {any}\n", .{msg.value});
                 return;
             },
             // TODO: Have a proper lsp error set
@@ -136,7 +139,33 @@ pub fn init_finish(self: *Connection, id: types.RequestId, init_result: types.LS
         }
     }
 }
-pub fn handle_shutdown() void {}
+pub fn handleShutdown(self: *Connection, msg_id: types.RequestId) !bool {
+    const shutdown_resp = Message{
+        .response = .{
+            .id = msg_id,
+            .result = .null,
+        },
+    };
+
+    try self.sender.try_push(shutdown_resp);
+
+    while (try self.receiver.try_pop(true)) |msg| {
+        switch (msg.value) {
+            .notification => {
+                std.debug.print("we received the notification {any}\n", .{msg});
+                self.*.status = .exiting_success;
+                return true;
+            },
+            // TODO: Have a proper lsp error set
+            else => {
+                std.debug.print("are we error?", .{});
+                return error.ProtocolError;
+            },
+        }
+    }
+
+    return false;
+}
 
 pub fn deinit(self: *Connection) void {
     self.io_threads.join();
@@ -195,9 +224,14 @@ fn writer_sender(c: *Connection) !void {
         std.debug.print("{s}\n", .{buffer.items});
 
         buffer.clearAndFree(c.allocator);
+        // TODO: we need to gc the messages here will figure that out later.
+        // Just need to make sure that I right and the message doesn't seg fault
+        // while (c._message_store.items) |i| {
+        //     _ = i;
+        //
+        // }
 
         if (!c.running()) break;
-        std.debug.print("we sent the msg", .{});
     }
     std.debug.print("ending...", .{});
 }
@@ -207,22 +241,23 @@ fn reader_receiver(c: *Connection) !void {
     var reader = std.io.bufferedReader(stdin.reader());
 
     while (c.running()) {
-        const lsp_msg = Message.read(c.allocator, reader.reader()) catch {
-            std.debug.print("failed reading header", .{});
-            unreachable;
-        };
+        const lsp_msg = try Message.read(c.allocator, reader.reader());
 
-        std.debug.print("{any}\n", .{lsp_msg});
+        std.debug.print("Client msg: {any}\n", .{lsp_msg});
+        // {
+        //     c.out_lock.lock();
+        //     defer c.out_lock.unlock();
+        //
+        //     try c._message_store.append(lsp_msg);
+        // }
 
         try c.receiver.try_push(lsp_msg);
     }
-
-    std.debug.print("ending...", .{});
 }
 
 fn stdioImpl(allocator: std.mem.Allocator) !Connection {
     var sender = try allocator.create(SenderChannel);
-    var receiver = try allocator.create(MsgChannel);
+    var receiver = try allocator.create(ReceiverChannel);
     errdefer allocator.destroy(sender);
     errdefer allocator.destroy(receiver);
 
@@ -235,6 +270,7 @@ fn stdioImpl(allocator: std.mem.Allocator) !Connection {
         .receiver = receiver,
         .io_threads = undefined,
         .arena = undefined,
+        ._message_store = undefined,
     };
 }
 

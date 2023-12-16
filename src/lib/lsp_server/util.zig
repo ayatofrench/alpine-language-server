@@ -1,6 +1,6 @@
 const std = @import("std");
 const Value = std.json.Value;
-const Message = @import("./Message.zig").Message;
+const types = @import("lsp_types.zig");
 
 pub fn toJsonValue(allocator: std.mem.Allocator, value: anytype) std.mem.Allocator.Error!std.json.Value {
     const T = @TypeOf(value);
@@ -65,8 +65,6 @@ pub fn toJsonValue(allocator: std.mem.Allocator, value: anytype) std.mem.Allocat
             break :blk Value{ .object = obj };
         },
         .ErrorSet => .{ .string = @errorName(value) },
-        // .Pointer => .null,
-        // TODO: figure out what to do with pointers...
         .Pointer => |ptr_info| switch (ptr_info.size) {
             .One => switch (@typeInfo(ptr_info.child)) {
                 .Array => {
@@ -92,7 +90,14 @@ pub fn toJsonValue(allocator: std.mem.Allocator, value: anytype) std.mem.Allocat
                     }
                 }
 
-                return try toJsonValue(allocator, slice);
+                var list = try std.json.Array.initCapacity(allocator, slice.len);
+                errdefer list.deinit();
+
+                for (slice) |inner| {
+                    try list.append(try toJsonValue(allocator, inner));
+                }
+
+                return Value{ .array = list };
             },
             else => @compileError("Unable to transform type '" ++ @typeName(T) ++ "' to json Value"),
         },
@@ -120,14 +125,21 @@ test {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
 
-    const json = "{\"id\": \"123\", \"method\": \"method\", \"params\": {}}";
+    // const json = "{\"id\": \"123\", \"method\": \"method\", \"params\": {}}";
     // const json = '{"id": "hello", "method": "method", "params": {}}';
     // _ = json;
-    const jsonMsg = try std.json.parseFromSlice(Message, arena.allocator(), json, .{
-        .ignore_unknown_fields = true,
-        .max_value_len = null,
-    });
-    _ = jsonMsg;
+    // const jsonMsg = try std.json.parseFromSlice(Message, arena.allocator(), json, .{
+    //     .ignore_unknown_fields = true,
+    //     .max_value_len = null,
+    // });
+    // _ = jsonMsg;
+
+    const items = [_]types.CompletionItem{
+        .{
+            .label = "x-data",
+            .kind = types.CompletionItemKind.Text,
+        },
+    };
     const Y = struct {
         a: u8,
     };
@@ -149,13 +161,14 @@ test {
         d: ?f64,
         e: Z,
         f: TaggedUnion,
-        g: [1]Y,
+        g: []const types.CompletionItem,
         h: @Vector(4, i32),
         i: Value,
         j: []const u8,
     };
 
     const part_one = [1]Y{Y{ .a = 8 }};
+    _ = part_one;
     const a = @Vector(4, i32){ 1, 2, 3, 4 };
     const s = X{
         .a = 42,
@@ -166,7 +179,7 @@ test {
         .f = TaggedUnion{
             .b = .{ .a = 1 },
         },
-        .g = part_one,
+        .g = &items,
         .h = a,
         .i = Value{ .string = "heh" },
         .j = "heh",
@@ -174,7 +187,6 @@ test {
 
     const val = try toJsonValue(arena.allocator(), s);
     // TODO figure out how to deinit a json.Value
-    // defer val.deinit();
     try std.json.stringify(val, .{}, std.io.getStdOut().writer());
     std.debug.print("\n", .{});
 
