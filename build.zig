@@ -24,7 +24,11 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    // exe.addIncludePath("./src/lib");
+    const lsp_server = b.createModule(.{
+        .source_file = .{ .path = "lsp_server/lsp_server.zig" },
+    });
+
+    exe.addModule("lsp_server", lsp_server);
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default

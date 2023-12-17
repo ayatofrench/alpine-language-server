@@ -1,11 +1,11 @@
 pub const Connection = @This();
 
 const std = @import("std");
-const Channel = @import("../Channel.zig").Channel;
+const Channel = @import("Channel.zig").Channel;
 const Header = @import("Header.zig");
-const Message = @import("./Message.zig").Message;
+const Message = @import("Message.zig").Message;
 const types = @import("lsp_types.zig");
-const util = @import("./util.zig");
+const util = @import("util.zig");
 
 // pub const Message = struct {
 //     msg: []const u8,
@@ -96,7 +96,7 @@ pub fn init(self: *Connection, server_capabilities: types.ServerCapabilities) !s
 
     // TODO: handle the case when init_msg can be null
     if (init_msg) |msg| {
-        try self.initFinish(msg.value.request.id, init_data);
+        try self.initFinish(msg.value.request.?.id, init_data);
     }
 
     return init_msg.?;
@@ -104,7 +104,7 @@ pub fn init(self: *Connection, server_capabilities: types.ServerCapabilities) !s
 
 pub fn initStart(self: *Connection) !?std.json.Parsed(Message) {
     while (try self.receiver.try_pop(true)) |msg| {
-        break switch (msg.value) {
+        break switch (msg.value.tag) {
             .request => {
                 return msg;
             },
@@ -116,6 +116,7 @@ pub fn initStart(self: *Connection) !?std.json.Parsed(Message) {
 }
 pub fn initFinish(self: *Connection, id: types.RequestId, init_result: types.LSPAny) anyerror!void {
     const resp = Message{
+        .tag = .response,
         .response = Message.Response{
             .id = id,
             .result = init_result,
@@ -126,7 +127,7 @@ pub fn initFinish(self: *Connection, id: types.RequestId, init_result: types.LSP
 
     while (try self.receiver.try_pop(true)) |msg| {
         defer msg.deinit();
-        switch (msg.value) {
+        switch (msg.value.tag) {
             .notification => {
                 std.debug.print("we received the notification {any}\n", .{msg.value});
                 return;
@@ -141,6 +142,7 @@ pub fn initFinish(self: *Connection, id: types.RequestId, init_result: types.LSP
 }
 pub fn handleShutdown(self: *Connection, msg_id: types.RequestId) !bool {
     const shutdown_resp = Message{
+        .tag = .response,
         .response = .{
             .id = msg_id,
             .result = .null,
@@ -150,7 +152,7 @@ pub fn handleShutdown(self: *Connection, msg_id: types.RequestId) !bool {
     try self.sender.try_push(shutdown_resp);
 
     while (try self.receiver.try_pop(true)) |msg| {
-        switch (msg.value) {
+        switch (msg.value.tag) {
             .notification => {
                 std.debug.print("we received the notification {any}\n", .{msg});
                 self.*.status = .exiting_success;
@@ -208,11 +210,11 @@ fn writer_sender(c: *Connection) !void {
         try writer.writeAll(
             \\,"id":
         );
-        _ = try std.json.stringify(msg.response.id, .{ .emit_null_optional_fields = false }, writer);
+        _ = try std.json.stringify(msg.response.?.id, .{ .emit_null_optional_fields = false }, writer);
         try writer.writeAll(
             \\,"result":
         );
-        _ = try std.json.stringify(msg.response.result, .{ .emit_null_optional_fields = false }, writer);
+        _ = try std.json.stringify(msg.response.?.result, .{ .emit_null_optional_fields = false }, writer);
         try writer.writeByte('}');
 
         var header_buffer: [64]u8 = undefined;

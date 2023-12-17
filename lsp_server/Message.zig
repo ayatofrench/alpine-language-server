@@ -3,14 +3,19 @@ const types = @import("lsp_types.zig");
 const Header = @import("Header.zig");
 
 // Credit: https://github.com/zigtools/zls/blob/master/src/Server.zig
-pub const Message = union(enum) {
-    request: Request,
-    notification: Notification,
-    response: Response,
+pub const Message = struct {
+    tag: enum(u32) {
+        request,
+        notification,
+        response,
+    },
+    request: ?Request = null,
+    notification: ?Notification = null,
+    response: ?Response = null,
 
     pub const Request = struct {
         id: types.RequestId,
-        method: []const u8,
+        // method: []const u8,
         params: Params,
 
         pub const Params = union(enum) {
@@ -75,7 +80,7 @@ pub const Message = union(enum) {
         options: std.json.ParseOptions,
     ) !Message {
         // const tracy_zone = tracy.trace(@src());
-        // defer tracy_zone.end();
+        //   defer tracy_zone.end();
 
         if (source != .object) return error.UnexpectedToken;
         const object = source.object;
@@ -98,18 +103,22 @@ pub const Message = union(enum) {
                         else
                             try std.json.parseFromValueLeaky(field.type, allocator, msg_params, options);
 
-                        return .{ .request = .{
-                            .id = msg_id,
-                            .method = field.name,
-                            .params = @unionInit(Request.Params, field.name, params),
-                        } };
+                        return .{
+                            .tag = .request,
+                            .request = .{
+                                .id = msg_id,
+                                .params = @unionInit(Request.Params, field.name, params),
+                            },
+                        };
                     }
                 }
-                return .{ .request = .{
-                    .id = msg_id,
-                    .method = msg_method,
-                    .params = .{ .unknown = msg_method },
-                } };
+                return .{
+                    .tag = .request,
+                    .request = .{
+                        .id = msg_id,
+                        .params = .{ .unknown = msg_method },
+                    },
+                };
             } else {
                 const result = object.get("result") orelse .null;
                 const error_obj = object.get("error") orelse .null;
@@ -119,16 +128,21 @@ pub const Message = union(enum) {
                 if (result != .null and err != null) return error.UnexpectedToken;
 
                 if (err) |e| {
-                    return .{ .response = .{
-                        .id = msg_id,
-
-                        .@"error" = e,
-                    } };
+                    return .{
+                        .tag = .response,
+                        .response = .{
+                            .id = msg_id,
+                            .@"error" = e,
+                        },
+                    };
                 } else {
-                    return .{ .response = .{
-                        .id = msg_id,
-                        .result = result,
-                    } };
+                    return .{
+                        .tag = .response,
+                        .response = .{
+                            .id = msg_id,
+                            .result = result,
+                        },
+                    };
                 }
             }
         } else {
@@ -147,73 +161,31 @@ pub const Message = union(enum) {
                         try std.json.parseFromValueLeaky(field.type, allocator, msg_params, options);
 
                     return .{
+                        .tag = .notification,
                         .notification = @unionInit(Notification, field.name, params),
                     };
                 }
             }
-            return .{ .notification = .{ .unknown = msg_method } };
-        }
-    }
-
-    pub fn isBlocking(self: Message) bool {
-        switch (self) {
-            .request => |request| switch (request.params) {
-                .initialize,
-                .shutdown,
-                => return true,
-                .@"textDocument/willSaveWaitUntil",
-                .@"textDocument/semanticTokens/full",
-                .@"textDocument/semanticTokens/range",
-                .@"textDocument/inlayHint",
-                .@"textDocument/completion",
-                .@"textDocument/signatureHelp",
-                .@"textDocument/definition",
-                .@"textDocument/typeDefinition",
-                .@"textDocument/implementation",
-                .@"textDocument/declaration",
-                .@"textDocument/hover",
-                .@"textDocument/documentSymbol",
-                .@"textDocument/formatting",
-                .@"textDocument/rename",
-                .@"textDocument/references",
-                .@"textDocument/documentHighlight",
-                .@"textDocument/codeAction",
-                .@"textDocument/foldingRange",
-                .@"textDocument/selectionRange",
-                => return false,
-                .unknown => return false,
-            },
-            .notification => |notification| switch (notification) {
-                .@"$/cancelRequest" => return false,
-                .initialized,
-                .exit,
-                .@"$/setTrace",
-                .@"textDocument/didOpen",
-                .@"textDocument/didChange",
-                .@"textDocument/didSave",
-                .@"textDocument/didClose",
-                .@"workspace/didChangeWorkspaceFolders",
-                .@"workspace/didChangeConfiguration",
-                => return true,
-                .unknown => return false,
-            },
-            .response => return true,
+            return .{
+                .tag = .notification,
+                .notification = .{ .unknown = msg_method },
+            };
         }
     }
 
     pub fn format(message: Message, comptime fmt_str: []const u8, options: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
         _ = options;
         if (fmt_str.len != 0) std.fmt.invalidFmtError(fmt_str, message);
-        switch (message) {
-            .request => |request| try writer.print("request-{}-{s}", .{ request.id, switch (request.params) {
+        switch (message.tag) {
+            .request => try writer.print("request-{}-{s}", .{ message.request.?.id, switch (message.request.?.params) {
                 .unknown => |method| method,
-                else => @tagName(request.params),
+                else => @tagName(message.request.?.params),
             } }),
-            .notification => |notification| try writer.print("notification-{s}", .{switch (notification) {
+            .notification => try writer.print("notification-{s}", .{switch (message.notification.?) {
                 .unknown => |method| method,
-                else => @tagName(notification),
+                else => @tagName(message.notification.?),
             }}),
-            .response => |response| try writer.print("response-{}", .{response.id}),
+            .response => try writer.print("response-{}", .{message.response.?.id}),
         }
     }
 
@@ -236,5 +208,24 @@ pub const Message = union(enum) {
 
     pub fn write(writer: anytype) !void {
         _ = writer;
+    }
+
+    test "https://github.com/ziglang/zig/issues/16392" {
+        const parsed_message = try std.json.parseFromSlice(
+            @This(),
+            std.testing.allocator,
+            \\{"jsonrpc":"2.0","id":7,"method":"textDocument/definition","params":{"textDocument":{"uri":"file:///tmp/tmp.zig"},"position":{"line":3,"character":21}}}
+        ,
+            .{},
+        );
+        defer parsed_message.deinit();
+        try std.testing.expect(parsed_message.value == .request);
+        try std.testing.expect(parsed_message.value.request.id == .number);
+        try std.testing.expectEqual(@as(u32, 7), parsed_message.value.request.id.number);
+        try std.testing.expectEqual(.@"textDocument/definition", parsed_message.value.request.params);
+        const params = parsed_message.value.request.params.@"textDocument/definition";
+        try std.testing.expectEqualStrings("file:///tmp/tmp.zig", params.textDocument.uri);
+        try std.testing.expectEqual(@as(u32, 3), params.position.line);
+        try std.testing.expectEqual(@as(u32, 21), params.position.character);
     }
 };
