@@ -15,6 +15,14 @@ pub fn build(b: *std.Build) void {
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
 
+    // const rust_build = b.addSystemCommand(&[_][]const u8{
+    //     "cargo",
+    //     "build",
+    //     "--release",
+    //     "--manifest-path",
+    //     "swc/Cargo.toml",
+    // });
+
     const exe = b.addExecutable(.{
         .name = "alpine-lsp",
         // In this case the main source file is merely a path, however, in more
@@ -24,11 +32,29 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    // exe.step.dependOn(&rust_build.step);
+
     const lsp_server = b.createModule(.{
         .source_file = .{ .path = "lsp_server/lsp_server.zig" },
     });
 
     exe.addModule("lsp_server", lsp_server);
+
+    // var swc = b.addStaticLibrary(.{
+    //     .name = "swc",
+    //     .optimize = optimize,
+    //     .target = target,
+    // });
+    exe.linkLibC();
+    // swc.addIncludePath(.{ .path = "./swc/include/" });
+    // swc.addObjectFile(.{ .path = "./swc/target/release/libswc.a" });
+
+    // exe.addIncludePath(.{ .path = "./swc/include/" });
+    // exe.addObjectFile(.{ .path = "./swc/target/release/libswc.a" });
+    // exe.linkLibrary(swc);
+    exe.addIncludePath(.{ .path = "./swc/include/" });
+    exe.addLibraryPath(.{ .path = "./swc/target/release/" });
+    exe.linkSystemLibrary("swc");
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
