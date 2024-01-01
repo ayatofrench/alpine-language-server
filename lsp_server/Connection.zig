@@ -7,14 +7,6 @@ const Message = @import("Message.zig").Message;
 const types = @import("lsp_types.zig");
 const util = @import("util.zig");
 
-// pub const Message = struct {
-//     msg: []const u8,
-// };
-
-// pub const MessageVariant = union(enum) {
-//
-// }
-
 const ReceiverChannel = Channel(std.json.Parsed(Message));
 const SenderChannel = Channel(Message);
 
@@ -26,7 +18,6 @@ io_threads: IoThreads,
 status: Status = .uninitialized,
 in_lock: std.Thread.Mutex = .{},
 out_lock: std.Thread.Mutex = .{},
-_message_store: std.ArrayList(std.json.Parsed(Message)),
 
 pub const ConnectionType = enum {
     stdio,
@@ -77,7 +68,6 @@ pub fn create(allocator: std.mem.Allocator, conn_type: ConnectionType) !*Connect
         .writer = writer,
         .reader = reader,
     };
-    c._message_store = std.ArrayList(std.json.Parsed(Message)).init(allocator);
 
     return c;
 }
@@ -91,7 +81,7 @@ pub fn init(self: *Connection, server_capabilities: types.ServerCapabilities) !s
 
     const init_data = try util.toJsonValue(self.arena.allocator(), types.InitializeResult{
         .capabilities = server_capabilities,
-        .serverInfo = .{ .name = "alpine-lsp", .version = "0.1" },
+        .serverInfo = .{ .name = "alpine-lsp", .version = "0.0.1" },
     });
 
     // TODO: handle the case when init_msg can be null
@@ -108,7 +98,7 @@ pub fn initStart(self: *Connection) !?std.json.Parsed(Message) {
             .request => {
                 return msg;
             },
-            else => std.debug.panic("we should not be here on startup", .{}),
+            else => @panic("unknown mesage type on startup"),
         };
     }
 
@@ -129,12 +119,10 @@ pub fn initFinish(self: *Connection, id: types.RequestId, init_result: types.LSP
         defer msg.deinit();
         switch (msg.value.tag) {
             .notification => {
-                std.debug.print("we received the notification {any}\n", .{msg.value});
                 return;
             },
             // TODO: Have a proper lsp error set
             else => {
-                std.debug.print("are we error?", .{});
                 return error.ProtocolError;
             },
         }
@@ -154,13 +142,11 @@ pub fn handleShutdown(self: *Connection, msg_id: types.RequestId) !bool {
     while (try self.receiver.try_pop(true)) |msg| {
         switch (msg.value.tag) {
             .notification => {
-                std.debug.print("we received the notification {any}\n", .{msg});
                 self.*.status = .exiting_success;
                 return true;
             },
             // TODO: Have a proper lsp error set
             else => {
-                std.debug.print("are we error?", .{});
                 return error.ProtocolError;
             },
         }
@@ -197,12 +183,6 @@ fn writer_sender(c: *Connection) !void {
     defer buffer.deinit(c.allocator);
     var writer = buffer.writer(c.allocator);
 
-    //     const JsonRpc = struct {
-    //
-    //         msg: types.LspAny,
-    // };
-
-    // while (c.running() or c.sender.fifo.count > 0) {
     while (try c.sender.try_pop(true)) |msg| {
         try writer.writeAll(
             \\{"jsonrpc": "2.0"
@@ -223,19 +203,10 @@ fn writer_sender(c: *Connection) !void {
         try out_writer.writeAll(prefix);
         try out_writer.writeAll(buffer.items);
 
-        std.debug.print("{s}\n", .{buffer.items});
-
         buffer.clearAndFree(c.allocator);
-        // TODO: we need to gc the messages here will figure that out later.
-        // Just need to make sure that I right and the message doesn't seg fault
-        // while (c._message_store.items) |i| {
-        //     _ = i;
-        //
-        // }
 
         if (!c.running()) break;
     }
-    std.debug.print("ending...", .{});
 }
 
 fn reader_receiver(c: *Connection) !void {
@@ -244,14 +215,6 @@ fn reader_receiver(c: *Connection) !void {
 
     while (c.running()) {
         const lsp_msg = try Message.read(c.allocator, reader.reader());
-
-        std.debug.print("Client msg: {any}\n", .{lsp_msg});
-        // {
-        //     c.out_lock.lock();
-        //     defer c.out_lock.unlock();
-        //
-        //     try c._message_store.append(lsp_msg);
-        // }
 
         try c.receiver.try_push(lsp_msg);
     }
@@ -272,33 +235,7 @@ fn stdioImpl(allocator: std.mem.Allocator) !Connection {
         .receiver = receiver,
         .io_threads = undefined,
         .arena = undefined,
-        ._message_store = undefined,
     };
 }
 
-// fn stdio_transport(allocator: std.mem.Allocator) !*Connection {
-//     const c = try allocator.create(Connection);
-//     errdefer allocator.destroy(c);
-//
-//     var sender = try allocator.create(MsgChannel);
-//     var receiver = try allocator.create(MsgChannel);
-//     sender.init(allocator);
-//     receiver.init(allocator);
-//
-//     c.* = Connection{
-//         .allocator = allocator,
-//         .sender = sender,
-//         .receiver = receiver,
-//         .io_threads = undefined,
-//     };
-//
-//     var writer = std.Thread.spawn(.{}, writer_worker, .{ c, sender }) catch unreachable;
-//
-//     c.io_threads = IoThreads{
-//         .writer = &writer,
-//     };
-//
-//     return c;
-// }
-//
 // Content-Length: 49\r\nContent-Type: application/vscode-jsonrpc; charset=utf8\r\n\r\n{"id": "hello", "method": "method", "params": {}}

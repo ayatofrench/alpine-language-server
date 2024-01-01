@@ -1,5 +1,6 @@
 const std = @import("std");
 const Connection = @import("lsp_server").Connection;
+const DocumentStore = @import("DocumentStore.zig");
 const Message = @import("lsp_server").Message;
 const lsp = @import("lsp_server").lsp;
 const util = @import("lsp_server").Json;
@@ -7,16 +8,25 @@ const alpine = @import("alpinejs/alpinejs.zig");
 
 pub const Server = @This();
 
+const CompletionItems = std.ArrayList(lsp.CompletionItem);
+
+const RequestResult = union(enum) {
+    shutdown,
+    result: Message,
+};
+
 connection: *Connection,
+document_store: DocumentStore,
 allocator: std.mem.Allocator,
 arena: std.heap.ArenaAllocator,
 
 pub fn create(allocator: std.mem.Allocator) !*Server {
-    var server = try allocator.create(Server);
+    const server = try allocator.create(Server);
     errdefer allocator.destroy(server);
 
     server.* = Server{
         .connection = try Connection.create(allocator, .stdio),
+        .document_store = DocumentStore.init(allocator),
         .allocator = allocator,
         .arena = undefined,
     };
@@ -32,7 +42,16 @@ pub fn start(self: *Server) !void {
         self.arena.deinit();
     }
 
-    const params = try self.connection.init(lsp.ServerCapabilities{
+    _ = try self.connection.init(lsp.ServerCapabilities{
+        .textDocumentSync = .{
+            .TextDocumentSyncOptions = .{
+                .openClose = true,
+                .change = .Full,
+                .save = .{ .bool = true },
+                .willSave = true,
+                .willSaveWaitUntil = true,
+            },
+        },
         .definitionProvider = .{
             .bool = true,
         },
@@ -44,70 +63,43 @@ pub fn start(self: *Server) !void {
             .resolveProvider = false,
         },
     });
-    _ = params;
 
     try self.main_loop();
 }
 
-fn main_loop(self: *Server) !void {
-    while (try self.connection.receiver.try_pop(true)) |message| {
-        std.debug.print("in main loop: {any}\n", .{message});
-        defer message.deinit();
-
-        switch (message.value.tag) {
-            .request => try self.handleRequest(message),
-            .notification => {},
-            else => {},
-        }
-    }
-}
-
-// fn toCompletionList(items: []const alpine.AlpineCompletion) lsp.CompletionList {
-//     var completionItems: [2]lsp.CompletionItem = undefined;
-//     for (items, 0..) |item, i| {
-//         completionItems[i] = lsp.CompletionItem{
-//             .label = item.name,
-//             .detail = item.description,
-//         };
-//     }
-//
-//     const new_memory = self.
-//
-//     return lsp.CompletionList{
-//         .items = completionItems,
-//         .isIncomplete = false,
-//     };
-// }
-
-fn handleRequest(self: *Server, message: std.json.Parsed(Message)) !void {
-    const RequestMethods = std.meta.Tag(Message.Request.Params);
-    switch (std.meta.stringToEnum(RequestMethods, @tagName(message.value.request.?.params)).?) {
+fn handleRequest(self: *Server, message: std.json.Parsed(Message)) !?RequestResult {
+    return switch (message.value.request.?.params) {
         .shutdown => {
             if (try self.connection.handleShutdown(message.value.request.?.id)) {
-                // break;
+                return .shutdown;
             }
+
+            return .shutdown;
         },
-        .@"textDocument/completion" => {
-            // TODO: start off simple. import treesitter and parse the html tree offer completion for alpine attributes
-            // var items = alpine.alpineCompletion();
-            // var completion_reponse = toCompletionList(items);
-
+        .@"textDocument/completion" => |params| {
             // TODO: Think about how to handle memory here
-            var items = alpine.alpineCompletion();
-            var completionItems: [2]lsp.CompletionItem = undefined;
-            for (items, 0..) |item, i| {
-                completionItems[i] = lsp.CompletionItem{
-                    .label = item.name,
-                    .detail = item.description,
-                };
+            const items = try alpine.alpineCompletion(
+                self.allocator,
+                params,
+                &self.document_store,
+            );
+
+            var completionItems = CompletionItems.init(self.allocator);
+            if (items) |compItems| {
+                for (compItems) |item| {
+                    try completionItems.append(.{
+                        .label = item.name,
+                        .detail = item.description,
+                    });
+                }
             }
 
-            var completion_reponse = lsp.CompletionList{
-                .items = &completionItems,
+            const completion_reponse = lsp.CompletionList{
+                .items = completionItems.items,
                 .isIncomplete = false,
             };
-            var payload = try util.toJsonValue(self.arena.allocator(), completion_reponse);
-            try self.connection.sender.try_push(Message{
+            const payload = try util.toJsonValue(self.arena.allocator(), completion_reponse);
+            return RequestResult{ .result = Message{
                 .tag = .response,
                 .response = .{
                     .id = lsp.RequestId{
@@ -116,17 +108,17 @@ fn handleRequest(self: *Server, message: std.json.Parsed(Message)) !void {
                     .result = payload,
                     .@"error" = null,
                 },
-            });
+            } };
         },
         .@"textDocument/hover" => {
             // TODO: need to create a hover provider handler here. Then we need to serve markdown files for the
             // alpine attribute definitions
-            var hover_response = lsp.Hover{
+            const hover_response = lsp.Hover{
                 .contents = .{ .MarkedString = lsp.MarkedString{ .string = "test" } },
                 .range = null,
             };
-            var str = try util.toJsonValue(self.arena.allocator(), hover_response);
-            try self.connection.sender.try_push(Message{
+            const str = try util.toJsonValue(self.arena.allocator(), hover_response);
+            return RequestResult{ .result = Message{
                 .tag = .response,
                 .response = .{
                     .id = lsp.RequestId{
@@ -135,12 +127,49 @@ fn handleRequest(self: *Server, message: std.json.Parsed(Message)) !void {
                     .result = str,
                     .@"error" = null,
                 },
-            });
+            } };
         },
         else => {
-            std.debug.print("command not supported", .{});
-            // self.connection.setStatus(.exiting_success);
-            // break;
+            std.log.info("command not supported\n", .{});
+            return null;
         },
+    };
+}
+
+fn handleNotification(self: *Server, message: std.json.Parsed(Message)) !void {
+    switch (message.value.notification.?) {
+        .@"textDocument/didOpen" => |noti| {
+            try self.document_store.setDocumentText(noti.textDocument.uri, noti.textDocument.text);
+        },
+        .@"textDocument/didChange" => |noti| {
+            const uri = noti.textDocument.uri;
+            const text = noti.contentChanges[0].literal_1.text;
+
+            try self.document_store.setDocumentText(uri, text);
+        },
+        else => {
+            std.log.info("notification not supported\n", .{});
+        },
+    }
+}
+
+fn main_loop(self: *Server) !void {
+    while (try self.connection.receiver.try_pop(true)) |message| {
+        defer message.deinit();
+
+        switch (message.value.tag) {
+            .request => {
+                const result = try self.handleRequest(message) orelse continue;
+
+                switch (result) {
+                    .shutdown => break,
+                    .result => |msg| {
+                        try self.connection.sender.try_push(msg);
+                    },
+                }
+            },
+            .notification => try self.handleNotification(message),
+            else => {},
+        }
     }
 }

@@ -1,0 +1,48 @@
+.{
+    .name = "alpine-lsp",
+    // This is a [Semantic Version](https://semver.org/).
+    // In a future version of Zig it will be used for package deduplication.
+    .version = "0.0.1",
+
+    // This field is optional.
+    // This is currently advisory only; Zig does not yet do anything
+    // with this value.
+    //.minimum_zig_version = "0.11.0",
+
+    // This field is optional.
+    // Each dependency must either provide a `url` and `hash`, or a `path`.
+    // `zig build --fetch` can be used to fetch all dependencies of a package, recursively.
+    // Once all dependencies are fetched, `zig build` no longer requires
+    // Internet connectivity.
+    .dependencies = .{
+        .@"tree-sitter" = .{
+            .url = "https://github.com/ziglibs/tree-sitter/archive/1be7d7a849f9242d6a74e1836a1cac6deefb5f7d.tar.gz",
+            .hash = "1220cbcf9093838fa5e22cb939cc6f22ed203edbe0769a4650a8e819ed16c79640e2",
+        },
+        .@"tree-sitter-html" = .{
+            .url = "https://github.com/ayatofrench/tree-sitter-html/archive/refs/tags/nightly.tar.gz",
+            .hash = "12200dcff44e0b32772e566013170797540bda3ef933303104cecad82e6f332e7efa",
+        },
+        .@"tree-sitter-astro" = .{
+            .url = "https://github.com/ayatofrench/tree-sitter-astro/archive/refs/tags/zig.tar.gz",
+            .hash = "12206227d0046fef01f05dd7a14379426b991d4be9bdc41e1c7bd1be6c97b66c0b32",
+        },
+        .treez = .{
+            .url = "https://github.com/ayatofrench/treez/archive/refs/heads/add-match-predicate.tar.gz",
+            .hash = "12202c07d9c428cc2959908befc438f726bbbf64ae70f3ef579a04680c0340cb8a01",
+        },
+    },
+    .paths = .{
+        // This makes *all* files, recursively, included in this package. It is generally
+        // better to explicitly list the files and directories instead, to insure that
+        // fetching from tarballs, file system paths, and version control all result
+        // in the same contents hash.
+        "",
+        // For example...
+        //"build.zig",
+        //"build.zig.zon",
+        //"src",
+        //"LICENSE",
+        //"README.md",
+    },
+}

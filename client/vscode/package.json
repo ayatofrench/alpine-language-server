@@ -1,0 +1,23 @@
+{
+  "name": "alpine-lsp",
+  "description": "Language Server for Alpine.js",
+  "version": "0.0.1",
+  "contributors": [
+    "ayatofrench"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ayatofrench/alpine-language-server"
+  },
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "activationEvents": [
+    "onLanguage:html",
+    "onLanguage:astro"
+  ],
+  "main": "./extension",
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  }
+}

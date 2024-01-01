@@ -26,14 +26,14 @@ pub fn toJsonValue(allocator: std.mem.Allocator, value: anytype) std.mem.Allocat
             };
         },
         .Enum, .EnumLiteral => {
-            if (comptime std.meta.trait.hasFn("toJsonValue")(T)) {
+            if (comptime std.meta.hasFn(T, "toJsonValue")) {
                 return value.toJsonValue();
             }
 
             return .{ .string = @tagName(value) };
         },
         .Union => |u| {
-            if (comptime std.meta.trait.hasFn("toJsonValue")(T)) {
+            if (comptime std.meta.hasFn(T, "toJsonValue")) {
                 return value.toJsonValue();
             }
 
