@@ -16,7 +16,7 @@
     "onLanguage:html",
     "onLanguage:astro"
   ],
-  "main": "./extension",
+  "main": "./extension.js",
   "dependencies": {
     "vscode-languageclient": "^9.0.1"
   }
